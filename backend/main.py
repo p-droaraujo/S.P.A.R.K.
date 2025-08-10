@@ -25,12 +25,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:8080", "http://127.0.0.1:8080"],
     allow_credentials=True,
-    allow_methods=["POST"],
+    allow_methods=["POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
 
 # --- Manual OPTIONS handler for CORS preflight ---
-# This will directly handle the browser's preflight check.
 @app.options("/prompt")
 async def prompt_options():
     return Response(status_code=200, headers={
@@ -56,19 +55,21 @@ def get_system_prompt():
     return f"""You are an expert UI/UX designer and system architect. 
 Your goal is to create a dynamic, non-linear visual display on a canvas.
 
-**CRITICAL RULES:**
-1.  The canvas background is black. All elements MUST be high-contrast. All text MUST be white (#FFFFFF).
-2.  You MUST use the exact field names defined in the tools (`tool`, `x`, `y`, `width`, `height`, `label`, `data`, `series_data`).
-3.  Do NOT invent new fields like `fontColor`, `backgroundColor`, or `fontSize`. Stick to the defined tool schema.
+**PRIMARY DIRECTIVE:** Provide a clear textual answer to the user's request, typically within an `InfoBox`. Additionally, generate visual representations or drawings only when they meaningfully complement the textual answer or are explicitly requested by the user. Strive for clarity and relevance in all visual output.
 
-You will receive a user's prompt and the JSON representation of all objects currently on the canvas.
-Your task is to return a new, complete JSON array of objects that should be on the canvas.
+**CRITICAL RULES:**
+1.  The canvas background is black. All elements MUST be high-contrast. All text MUST be futuristic blue (#4dc3ff).
+2.  You MUST use the exact field names defined in the tools.
+3.  Do NOT invent new fields. Stick to the defined tool schema.
+4.  **ASCII Art Specific**: When generating `DrawAscii` content, ensure all backslash characters (`\") are escaped as double backslashes (`\\`) within the `text_content` field. For example, a single backslash in ASCII art should become `\\` in the JSON.
 
 **Workflow:**
 1.  **Analyze the Request**: Understand what the user wants to see.
-2.  **Choose the Right Tools**: From the list of available tools, select the best ones to represent the information. 
-3.  **Manage the Canvas**: You can add, remove, or modify objects from the `current_objects` list.
-4.  **Optimize Layout**: This is the most important step. Arrange all components (new and existing) on the canvas. Your goal is to maximize whitespace and create a clean, balanced, and aesthetically pleasing composition. Do NOT simply stack new elements vertically. Re-evaluate the entire layout and relocate existing objects if it improves the overall design. Use the entire canvas space (1920x1080) effectively.
+2.  **Choose the Right Tools**: From the list of available tools, select the best ones to represent the information.
+3.  **Visual Representation**: For general drawing requests (e.g., 'draw a cat', 'show me a house', 'display a welcome message'), **prioritize using the `DrawAscii` tool**. You can compose complex visuals from characters. Only use `DrawRectangle`, `DrawCircle`, or `DrawLine` if explicitly asked for a geometric shape or if it's part of a graph.
+4.  **Graph Data**: When generating a `LineGraph`, ensure the `data` field is a list of `[x, y]` pairs (e.g., `"data": [[1, 10], [2, 15]]`) and include a `label` (e.g., `"label": "Sales Trend"`).
+5.  **Manage the Canvas**: You can add, remove, or modify objects from the `current_objects` list.
+6.  **Optimize Layout**: Arrange all components (new and existing) on the canvas. Your goal is to maximize whitespace and create a clean, balanced, and aesthetically pleasing composition. Do NOT simply stack new elements vertically. Re-evaluate the entire layout and relocate existing objects if it improves the overall design. Use the entire canvas space (1920x1080) effectively.
 
 **Available Tools:**
 {tool_definitions}
@@ -80,11 +81,13 @@ Respond ONLY with a valid JSON object in the format: `{{"canvas_objects": [...]}
 # --- API Endpoint ---
 @app.post("/prompt")
 async def handle_prompt(request: PromptRequest):
+    print(f"\n--- New Request: {request.prompt} ---")
+    model = genai.GenerativeModel('gemini-1.5-pro-latest') # Ensure using Pro model
+
     system_prompt = get_system_prompt()
     user_prompt = f"""User Prompt: \"{request.prompt}\"\n\nCurrent Canvas Objects: {request.current_objects}\n"""
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(
             [system_prompt, user_prompt],
             generation_config=genai.GenerationConfig(
@@ -99,11 +102,12 @@ async def handle_prompt(request: PromptRequest):
             response_text = response_text.strip()[7:-3].strip()
 
         parsed_json = json.loads(response_text)
+        print("Final Output Sent to Frontend.")
         return parsed_json
 
     except json.JSONDecodeError as e:
         print(f"JSON Decode Error: {e}")
-        print(f"Original non-JSON response: {response.text}")
+        print(f"Original non-JSON response: {locals().get('response_text', 'N/A')}")
         raise HTTPException(status_code=500, detail="AI returned invalid JSON.")
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
